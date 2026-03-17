@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import LiveMonitoring from './components/LiveMonitoring';
+import Alerts from './components/Alerts';
+import Logs from './components/Logs';
 
 function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
@@ -163,12 +165,12 @@ function App() {
               <LiveMonitoring />
             )}
 
-            {['Alerts', 'Logs'].includes(activeTab) && (
-              <div className="flex flex-col items-center justify-center h-[60vh] text-slate-500 animate-fade-in-up">
-                <span className="text-6xl mb-6 opacity-30">🚧</span>
-                <h2 className="text-3xl font-bold text-slate-300 mb-3">{activeTab}</h2>
-                <p className="text-lg">This module is currently under development.</p>
-              </div>
+            {activeTab === 'Alerts' && (
+              <Alerts />
+            )}
+
+            {activeTab === 'Logs' && (
+              <Logs />
             )}
 
           </div>
