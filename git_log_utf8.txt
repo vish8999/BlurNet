@@ -1,0 +1,6 @@
+﻿9709749 - vish8999 <vishalchauhan062004@gmail.com> - 2026-03-17 : Add React Router for Dashboard navigation
+54decec - vish8999 <vishalchauhan062004@gmail.com> - 2026-03-17 : Add Alerts and Logs UI pages to the Dashboard
+3394d82 - vish8999 <vishalchauhan062004@gmail.com> - 2026-03-17 : Enhance Dashboard UI with Tailwind, Navbar, Sidebar and Live Camera Monitoring
+17a0cae - vish8999 <vishalchauhan062004@gmail.com> - 2026-02-19 : added db and basic backend
+d87ca1d - vish8999 <vishalchauhan062004@gmail.com> - 2026-02-17 : initial setup
+aa63a0a - vish8999 <vishalchauhan062004@gmail.com> - 2026-02-13 : initial setup

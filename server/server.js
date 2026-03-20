@@ -1,77 +1,91 @@
-const express = require('express');
-const cors = require('cors');
-const mongoose = require('mongoose');
-const dotenv = require('dotenv');
-const path = require('path');
-
-const envPath = path.resolve(__dirname, '.env');
-
-let envResult = dotenv.config({ path: envPath, encoding: 'utf8' });
-if (envResult.error) {
-  console.error('Failed to load .env:', envResult.error);
-  process.exit(1);
-}
-
-// If `.env` was saved as UTF-16 (common with Windows Notepad), parsing can yield `{}`.
-if (!envResult.parsed || Object.keys(envResult.parsed).length === 0) {
-  const utf16Result = dotenv.config({ path: envPath, encoding: 'utf16le' });
-  if (!utf16Result.error && utf16Result.parsed && Object.keys(utf16Result.parsed).length > 0) {
-    envResult = utf16Result;
-  }
-}
+const express = require("express");
+const cors = require("cors");
+const mongoose = require("mongoose");
+const http = require("http");
+const { Server } = require("socket.io");
+require("dotenv").config();
 
 const app = express();
+const server = http.createServer(app);
 
+// Socket.io setup with CORS
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+  },
+});
+
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-const parsedEnv = envResult.parsed ?? {};
-
-// Windows files sometimes include a UTF-8 BOM, which can turn "PORT" into "\ufeffPORT".
-if (!parsedEnv.PORT && parsedEnv['\ufeffPORT']) parsedEnv.PORT = parsedEnv['\ufeffPORT'];
-if (!parsedEnv.MONGO_URI && parsedEnv['\ufeffMONGO_URI']) parsedEnv.MONGO_URI = parsedEnv['\ufeffMONGO_URI'];
-
-function pickEnv(name) {
-  const value = process.env[name];
-  if (typeof value === 'string' && value.trim() !== '') return value;
-  const parsedValue = parsedEnv[name];
-  if (typeof parsedValue === 'string' && parsedValue.trim() !== '') return parsedValue;
-  return undefined;
-}
-
-const PORT = pickEnv('PORT');
-const MONGO_URI = pickEnv('MONGO_URI');
-
-if (!PORT) {
-  console.error('PORT is not defined in .env');
-  process.exit(1);
-}
+// Environment variables
+const PORT = process.env.PORT || 5000;
+const MONGO_URI = process.env.MONGO_URI;
 
 if (!MONGO_URI) {
-  console.error('MONGO_URI is not defined in .env');
+  console.error("MONGO_URI not found in .env file");
   process.exit(1);
 }
 
-async function connectDB() {
-  try {
-    await mongoose.connect(MONGO_URI);
-    console.log('MongoDB Connected');
-  } catch (error) {
-    console.error('MongoDB connection error:', error);
-    process.exit(1);
-  }
-}
+// MongoDB Connection
+mongoose
+  .connect(MONGO_URI)
+  .then(() => {
+    console.log("MongoDB Connected");
 
-app.get('/api/test', (req, res) => {
-  res.json({ message: 'API Working' });
+    server.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("MongoDB connection failed:", err);
+    process.exit(1);
+  });
+
+// Test Route
+app.get("/api/test", (req, res) => {
+  res.json({ message: "API Working" });
 });
 
-async function startServer() {
-  await connectDB();
+// ── WebRTC Signaling via Socket.io (Room-Scoped) ──
+io.on("connection", (socket) => {
+  console.log("[Socket] Client connected:", socket.id);
 
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  // Client joins a room
+  socket.on("join-room", (roomId) => {
+    socket.join(roomId);
+    // Notify others in the room that a new user joined
+    socket.to(roomId).emit("user-joined", socket.id);
+    console.log(`[Socket] ${socket.id} joined room: ${roomId}`);
   });
-}
 
-startServer();
+  // A client's camera is ready — tell others in the room to create an offer
+  socket.on("ready", (roomId) => {
+    socket.to(roomId).emit("create-offer");
+    console.log(`[Socket] ${socket.id} is ready in room: ${roomId}`);
+  });
+
+  // Relay offer to peers in the same room
+  socket.on("offer", ({ offer, roomId }) => {
+    console.log(`[Socket] Relaying offer from ${socket.id} to room: ${roomId}`);
+    socket.to(roomId).emit("offer", offer);
+  });
+
+  // Relay answer to peers in the same room
+  socket.on("answer", ({ answer, roomId }) => {
+    console.log(`[Socket] Relaying answer from ${socket.id} to room: ${roomId}`);
+    socket.to(roomId).emit("answer", answer);
+  });
+
+  // Relay ICE candidates to peers in the same room
+  socket.on("ice-candidate", ({ candidate, roomId }) => {
+    socket.to(roomId).emit("ice-candidate", candidate);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("[Socket] Client disconnected:", socket.id);
+  });
+});
+

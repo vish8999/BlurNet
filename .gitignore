@@ -1,0 +1,30 @@
+# Node modules
+node_modules/
+
+# Environment files
+.env
+.env.*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Vite build
+dist/
+
+# Python virtual env (for ai-service later)
+venv/
+__pycache__/
+
+# IDE files
+.vscode/
+
+node_modules/
+client/node_modules/
+server/node_modules/
+.env
