@@ -69,15 +69,20 @@ const LiveMonitoring = () => {
         videoRef.current.srcObject = stream;
       }
 
-      // Create peer connection & add every local track to it
-      const pc = createPeerConnection();
+      // Reuse existing peer connection or create a new one
+      let pc = peerConnectionRef.current;
+      if (!pc) {
+        pc = createPeerConnection();
+      }
+
+      // Add every local track to the peer connection
       stream.getTracks().forEach((track) => {
         pc.addTrack(track, stream);
       });
 
       // Tell the signaling server we're ready
       if (socketRef.current) {
-        socketRef.current.emit('ready', roomId);
+        socketRef.current.emit('ready', roomIdRef.current);
       }
 
       setIsCameraOn(true);
@@ -133,22 +138,10 @@ const LiveMonitoring = () => {
       console.log('[Socket] Connected:', socket.id);
     });
 
-    // Another user joined the same room — if our camera is already on, initiate the offer
-    socket.on('user-joined', async (userId) => {
+    // Another user joined the same room
+    socket.on('user-joined', (userId) => {
       console.log('[Socket] User joined room:', userId);
       setUserJoined(true);
-
-      const pc = peerConnectionRef.current;
-      if (pc) {
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.emit('offer', { offer, roomId: roomIdRef.current });
-          console.log('[WebRTC] Offer sent to newly joined user:', userId);
-        } catch (err) {
-          console.error('[WebRTC] Error creating offer for new user:', err);
-        }
-      }
     });
 
     // The server tells this client to create an offer
