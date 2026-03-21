@@ -22,8 +22,12 @@ const LiveMonitoring = () => {
   const [remoteStream, setRemoteStream] = useState(null);
   const [error, setError] = useState(null);
   const [roomId, setRoomId] = useState('blurnet-room-1');
+  const roomIdRef = useRef(roomId);           // keeps roomId accessible in socket closures
   const [isJoined, setIsJoined] = useState(false);
   const [userJoined, setUserJoined] = useState(false);
+
+  // Keep the ref in sync whenever state changes
+  useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
 
   // ── Create RTCPeerConnection & wire up remote stream + signaling ──
   const createPeerConnection = () => {
@@ -43,7 +47,7 @@ const LiveMonitoring = () => {
     // Send ICE candidates to the remote peer via the signaling server
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
-        socketRef.current.emit('ice-candidate', { candidate: event.candidate, roomId });
+        socketRef.current.emit('ice-candidate', { candidate: event.candidate, roomId: roomIdRef.current });
       }
     };
 
@@ -129,10 +133,22 @@ const LiveMonitoring = () => {
       console.log('[Socket] Connected:', socket.id);
     });
 
-    // Another user joined the same room
-    socket.on('user-joined', (userId) => {
+    // Another user joined the same room — if our camera is already on, initiate the offer
+    socket.on('user-joined', async (userId) => {
       console.log('[Socket] User joined room:', userId);
       setUserJoined(true);
+
+      const pc = peerConnectionRef.current;
+      if (pc) {
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('offer', { offer, roomId: roomIdRef.current });
+          console.log('[WebRTC] Offer sent to newly joined user:', userId);
+        } catch (err) {
+          console.error('[WebRTC] Error creating offer for new user:', err);
+        }
+      }
     });
 
     // The server tells this client to create an offer
@@ -142,7 +158,7 @@ const LiveMonitoring = () => {
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        socket.emit('offer', { offer, roomId });
+        socket.emit('offer', { offer, roomId: roomIdRef.current });
         console.log('[WebRTC] Offer sent');
       } catch (err) {
         console.error('[WebRTC] Error creating offer:', err);
@@ -166,7 +182,7 @@ const LiveMonitoring = () => {
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        socket.emit('answer', { answer, roomId });
+        socket.emit('answer', { answer, roomId: roomIdRef.current });
         console.log('[WebRTC] Answer sent');
       } catch (err) {
         console.error('[WebRTC] Error handling offer:', err);
