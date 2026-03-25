@@ -32,8 +32,13 @@ const LiveMonitoring = () => {
   const [isBlurActive, setIsBlurActive] = useState(false);
   const [model, setModel] = useState(null);
   const isBlurActiveRef = useRef(isBlurActive);
+  const modelRef = useRef(null);
+  const lastDetectionTimeRef = useRef(0);
 
-  // Load the coco-ssd model once when component mounts
+  // Keep the ref in sync whenever state changes
+  useEffect(() => { modelRef.current = model; }, [model]);
+  useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
+  useEffect(() => { isBlurActiveRef.current = isBlurActive; }, [isBlurActive]);
   useEffect(() => {
     const loadModel = async () => {
       try {
@@ -251,7 +256,7 @@ const LiveMonitoring = () => {
 
   // Render loop to draw video frame onto canvas continuously
   useEffect(() => {
-    const drawFrame = () => {
+    const drawFrame = async () => {
       if (videoRef.current && canvasRef.current && videoRef.current.readyState >= 2) {
         const video = videoRef.current;
         const canvas = canvasRef.current;
@@ -264,6 +269,20 @@ const LiveMonitoring = () => {
 
         const w = canvas.width;
         const h = canvas.height;
+
+        // Perform object detection matching (throttle to ~300ms)
+        const now = Date.now();
+        if (modelRef.current && now - lastDetectionTimeRef.current >= 300) {
+          lastDetectionTimeRef.current = now;
+          try {
+            const predictions = await modelRef.current.detect(video);
+            predictions.forEach(prediction => {
+              console.log(`Detected: ${prediction.class} - Confidence: ${(prediction.score * 100).toFixed(1)}% | BBox:`, prediction.bbox);
+            });
+          } catch (err) {
+            console.error("Detection error:", err);
+          }
+        }
 
         // 1. Draw full normal video
         ctx.filter = 'none';
