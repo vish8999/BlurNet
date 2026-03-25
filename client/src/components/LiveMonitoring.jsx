@@ -1,5 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
+import '@tensorflow/tfjs';
+import * as cocoSsd from '@tensorflow-models/coco-ssd';
 
 // ICE servers for NAT traversal (public STUN servers)
 const ICE_SERVERS = {
@@ -13,6 +15,8 @@ const SOCKET_URL = 'http://localhost:5000';
 
 const LiveMonitoring = () => {
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const animationFrameRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
@@ -25,9 +29,39 @@ const LiveMonitoring = () => {
   const roomIdRef = useRef(roomId);           // keeps roomId accessible in socket closures
   const [isJoined, setIsJoined] = useState(false);
   const [userJoined, setUserJoined] = useState(false);
+  const [isBlurActive, setIsBlurActive] = useState(false);
+  const [model, setModel] = useState(null);
+  const isBlurActiveRef = useRef(isBlurActive);
+
+  // Load the coco-ssd model once when component mounts
+  useEffect(() => {
+    const loadModel = async () => {
+      try {
+        const loadedModel = await cocoSsd.load();
+        setModel(loadedModel);
+        console.log("Model Loaded");
+      } catch (err) {
+        console.error("Failed to load model:", err);
+      }
+    };
+    loadModel();
+  }, []);
 
   // Keep the ref in sync whenever state changes
   useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
+  useEffect(() => { isBlurActiveRef.current = isBlurActive; }, [isBlurActive]);
+
+  // Toggle blur periodically when camera is on
+  useEffect(() => {
+    if (!isCameraOn) {
+      if (isBlurActive) setIsBlurActive(false);
+      return;
+    }
+    const intervalId = setInterval(() => {
+      setIsBlurActive(prev => !prev);
+    }, 3000);
+    return () => clearInterval(intervalId);
+  }, [isCameraOn]);
 
   // ── Create RTCPeerConnection & wire up remote stream + signaling ──
   const createPeerConnection = () => {
@@ -67,6 +101,7 @@ const LiveMonitoring = () => {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(e => console.error("Error playing video:", e));
       }
 
       // Reuse existing peer connection or create a new one
@@ -214,6 +249,67 @@ const LiveMonitoring = () => {
     };
   }, []);
 
+  // Render loop to draw video frame onto canvas continuously
+  useEffect(() => {
+    const drawFrame = () => {
+      if (videoRef.current && canvasRef.current && videoRef.current.readyState >= 2) {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+        }
+
+        const w = canvas.width;
+        const h = canvas.height;
+
+        // 1. Draw full normal video
+        ctx.filter = 'none';
+        ctx.drawImage(video, 0, 0, w, h);
+
+        // 2. Apply blur effect to center region ONLY if blur is active
+        if (isBlurActiveRef.current) {
+          ctx.save();
+          
+          // Define center region (e.g., 40% of width and height)
+          const blurW = w * 0.4;
+          const blurH = h * 0.4;
+          const blurX = (w - blurW) / 2;
+          const blurY = (h - blurH) / 2;
+
+          // Create a clipping path for the center
+          ctx.beginPath();
+          ctx.rect(blurX, blurY, blurW, blurH);
+          ctx.clip();
+
+          // Apply blur filter and redraw the video in the clipped area
+          ctx.filter = 'blur(12px)';
+          ctx.drawImage(video, 0, 0, w, h);
+
+          ctx.restore();
+          ctx.filter = 'none'; // Ensure filter is reset for next frame
+        }
+      }
+      animationFrameRef.current = requestAnimationFrame(drawFrame);
+    };
+
+    if (isCameraOn) {
+      animationFrameRef.current = requestAnimationFrame(drawFrame);
+    } else {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    }
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [isCameraOn]);
+
   return (
     <div className="w-full h-full flex flex-col gap-6 animate-fade-in-up [animation-duration:500ms]">
       
@@ -331,14 +427,27 @@ const LiveMonitoring = () => {
                 <p className="text-sm text-slate-600">Click "Start Camera" to begin</p>
               </div>
 
-              {/* Local video element */}
+              {/* Local video element (hidden via opacity/absolute to prevent rendering suspension) */}
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted={isMuted}
+                className="absolute opacity-0 pointer-events-none w-1 h-1 z-0"
+              />
+
+              {/* Canvas rendered element */}
+              <canvas
+                ref={canvasRef}
                 className={`w-full h-full object-cover relative z-10 transition-opacity duration-700 ${isCameraOn ? 'opacity-100' : 'opacity-0'}`}
               />
+
+              {/* Warning overlay for blur */}
+              {isBlurActive && (
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-500/90 text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg shadow-red-500/30 z-30 flex items-center gap-2 animate-bounce border border-red-400">
+                  <span className="text-lg">⚠</span> Sensitive content detected
+                </div>
+              )}
 
               {/* Grid overlay */}
               {isCameraOn && (

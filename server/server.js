@@ -34,15 +34,15 @@ mongoose
   .connect(MONGO_URI)
   .then(() => {
     console.log("MongoDB Connected");
-
-    server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
   })
   .catch((err) => {
-    console.error("MongoDB connection failed:", err);
-    process.exit(1);
+    console.error("MongoDB connection failed (Server will continue running):", err.message);
   });
+
+// Start the server regardless of Database status for Socket.io to work
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
 
 // Test Route
 app.get("/api/test", (req, res) => {
@@ -88,4 +88,4 @@ io.on("connection", (socket) => {
     console.log("[Socket] Client disconnected:", socket.id);
   });
 });
-
+
