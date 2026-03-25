@@ -34,6 +34,7 @@ const LiveMonitoring = () => {
   const isBlurActiveRef = useRef(isBlurActive);
   const modelRef = useRef(null);
   const lastDetectionTimeRef = useRef(0);
+  const latestPredictionsRef = useRef([]);
 
   // Keep the ref in sync whenever state changes
   useEffect(() => { modelRef.current = model; }, [model]);
@@ -274,41 +275,44 @@ const LiveMonitoring = () => {
         const now = Date.now();
         if (modelRef.current && now - lastDetectionTimeRef.current >= 300) {
           lastDetectionTimeRef.current = now;
-          try {
-            const predictions = await modelRef.current.detect(video);
-            predictions.forEach(prediction => {
-              console.log(`Detected: ${prediction.class} - Confidence: ${(prediction.score * 100).toFixed(1)}% | BBox:`, prediction.bbox);
-            });
-          } catch (err) {
-            console.error("Detection error:", err);
-          }
+          modelRef.current.detect(video).then(predictions => {
+             // Store predictions via ref so the rapid draw loop can access them asynchronously
+             latestPredictionsRef.current = predictions;
+             
+             // Optional: Still log for debugging
+             predictions.forEach(prediction => {
+              // console.log(`Detected: ${prediction.class} - Confidence: ${(prediction.score * 100).toFixed(1)}%`);
+             });
+          }).catch(err => console.error("Detection error:", err));
         }
 
         // 1. Draw full normal video
         ctx.filter = 'none';
         ctx.drawImage(video, 0, 0, w, h);
 
-        // 2. Apply blur effect to center region ONLY if blur is active
-        if (isBlurActiveRef.current) {
+        // 2. Apply blur effect dynamically based on recognized bounding boxes
+        if (isBlurActiveRef.current && latestPredictionsRef.current.length > 0) {
           ctx.save();
           
-          // Define center region (e.g., 40% of width and height)
-          const blurW = w * 0.4;
-          const blurH = h * 0.4;
-          const blurX = (w - blurW) / 2;
-          const blurY = (h - blurH) / 2;
-
-          // Create a clipping path for the center
           ctx.beginPath();
-          ctx.rect(blurX, blurY, blurW, blurH);
-          ctx.clip();
+          
+          // Generate a unified clipping path containing ALL detected boxes
+          latestPredictionsRef.current.forEach(prediction => {
+            // Optional filter: Blur ONLY "person" objects
+            if (prediction.class === 'person') {
+              const [x, y, width, height] = prediction.bbox;
+              ctx.rect(x, y, width, height);
+            }
+          });
 
-          // Apply blur filter and redraw the video in the clipped area
-          ctx.filter = 'blur(12px)';
+          ctx.clip(); // Mask the canvas strictly to those box coordinates
+          
+          // Redraw the video explicitly inside the masked boundary with a deep blur
+          ctx.filter = 'blur(15px)';
           ctx.drawImage(video, 0, 0, w, h);
 
-          ctx.restore();
-          ctx.filter = 'none'; // Ensure filter is reset for next frame
+          ctx.restore(); // Undo the clip mask
+          ctx.filter = 'none'; // Ensure filter is strictly reset
         }
       }
       animationFrameRef.current = requestAnimationFrame(drawFrame);
