@@ -298,9 +298,14 @@ const LiveMonitoring = () => {
           
           // Generate a unified clipping path containing ALL detected boxes
           latestPredictionsRef.current.forEach(prediction => {
-            // Optional filter: Blur ONLY "person" objects
-            if (prediction.class === 'person') {
-              const [x, y, width, height] = prediction.bbox;
+            const [x, y, width, height] = prediction.bbox;
+            console.log(`Detected class: ${prediction.class} | Width: ${width}`);
+            
+            // Blur only if object size is large (ignore small detections)
+            // Do not blur full person detection
+            const widthThreshold = 80; // Minimum width to trigger blur
+            
+            if (prediction.class !== 'person' && width > widthThreshold) {
               ctx.rect(x, y, width, height);
             }
           });
