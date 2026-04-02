@@ -31,19 +31,24 @@ const LiveMonitoring = () => {
   const [isJoined, setIsJoined] = useState(false);
   const [userJoined, setUserJoined] = useState(false);
   const [isBlurActive, setIsBlurActive] = useState(false);
+  const [isSensitive, setIsSensitive] = useState(false);
   const [model, setModel] = useState(null);
   const [nsfwModel, setNsfwModel] = useState(null);
   const isBlurActiveRef = useRef(isBlurActive);
+  const isSensitiveRef = useRef(isSensitive);
   const modelRef = useRef(null);
   const nsfwModelRef = useRef(null);
   const lastDetectionTimeRef = useRef(0);
   const lastNsfwDetectionTimeRef = useRef(0);
+  const isDetectingRef = useRef(false);
+  const isNsfwDetectingRef = useRef(false);
   const latestPredictionsRef = useRef([]);
   const latestNsfwPredictionsRef = useRef([]);
 
   // Keep the ref in sync whenever state changes
   useEffect(() => { modelRef.current = model; }, [model]);
   useEffect(() => { nsfwModelRef.current = nsfwModel; }, [nsfwModel]);
+  useEffect(() => { isSensitiveRef.current = isSensitive; }, [isSensitive]);
   useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
   useEffect(() => { isBlurActiveRef.current = isBlurActive; }, [isBlurActive]);
   useEffect(() => {
@@ -63,6 +68,9 @@ const LiveMonitoring = () => {
   useEffect(() => {
     const loadNsfwModel = async () => {
       try {
+        // Ensure TF backend is ready
+        await tf.ready();
+        // Use default bundled MobileNetV2 model (no network fetch needed)
         const loadedModel = await nsfwjs.load();
         setNsfwModel(loadedModel);
         console.log("NSFW model loaded");
@@ -291,43 +299,60 @@ const LiveMonitoring = () => {
         const w = canvas.width;
         const h = canvas.height;
 
-        // Perform object detection matching (throttle to ~300ms)
+        // Perform object detection matching (throttle to ~500ms, skip if previous detection still running)
         const now = Date.now();
-        if (modelRef.current && now - lastDetectionTimeRef.current >= 300) {
+        if (modelRef.current && !isDetectingRef.current && now - lastDetectionTimeRef.current >= 500) {
           lastDetectionTimeRef.current = now;
+          isDetectingRef.current = true;
           modelRef.current.detect(video).then(predictions => {
-             // Store predictions via ref so the rapid draw loop can access them asynchronously
              latestPredictionsRef.current = predictions;
-             
-             // Optional: Still log for debugging
-             predictions.forEach(prediction => {
-              // console.log(`Detected: ${prediction.class} - Confidence: ${(prediction.score * 100).toFixed(1)}%`);
-             });
-          }).catch(err => console.error("Detection error:", err));
+          }).catch(err => console.error("Detection error:", err))
+            .finally(() => { isDetectingRef.current = false; });
         }
 
-        // Perform NSFW classification on canvas frame (throttle to ~500ms)
-        if (nsfwModelRef.current && now - lastNsfwDetectionTimeRef.current >= 500) {
+        // Perform NSFW classification on canvas frame (throttle to ~800ms, skip if previous classification still running)
+        if (nsfwModelRef.current && !isNsfwDetectingRef.current && now - lastNsfwDetectionTimeRef.current >= 800) {
           lastNsfwDetectionTimeRef.current = now;
+          isNsfwDetectingRef.current = true;
 
           // Convert canvas pixels to a tensor and resize to model input (224x224)
           const rawTensor = tf.browser.fromPixels(canvas);
           const resized = tf.image.resizeBilinear(rawTensor, [224, 224]);
-          // nsfwjs expects a 3D tensor (H, W, C) — no need to normalize, the model handles it
 
           nsfwModelRef.current.classify(resized).then(predictions => {
             latestNsfwPredictionsRef.current = predictions;
+            
+            // Extract probabilities
+            const pornProb = predictions.find(p => p.className === 'Porn')?.probability || 0;
+            const sexyProb = predictions.find(p => p.className === 'Sexy')?.probability || 0;
+
+            // Decision Logic
+            if (pornProb > 0.6 || sexyProb > 0.7) {
+              setIsSensitive(true);
+            } else {
+              setIsSensitive(false);
+            }
+
             console.log('[NSFW]', predictions.map(p => `${p.className}: ${(p.probability * 100).toFixed(1)}%`).join(' | '));
-          }).catch(err => console.error('NSFW classification error:', err));
+          }).catch(err => console.error('NSFW classification error:', err))
+            .finally(() => { isNsfwDetectingRef.current = false; });
 
           // Dispose tensors to prevent memory leaks
           rawTensor.dispose();
           resized.dispose();
         }
 
-        // 1. Draw full normal video
-        ctx.filter = 'none';
+        // 1. Draw full normal video (with blur if sensitive)
+        if (isSensitiveRef.current) {
+          ctx.filter = 'blur(20px)';
+        } else {
+          ctx.filter = 'none';
+        }
+        
         ctx.drawImage(video, 0, 0, w, h);
+        
+        // Reset filter
+        ctx.filter = 'none';
 
         // 2. Apply blur effect dynamically based on recognized bounding boxes
         if (isBlurActiveRef.current && latestPredictionsRef.current.length > 0) {
@@ -521,7 +546,7 @@ const LiveMonitoring = () => {
               />
 
               {/* Warning overlay for blur */}
-              {isBlurActive && (
+              {isSensitive && (
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-500/90 text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg shadow-red-500/30 z-30 flex items-center gap-2 animate-bounce border border-red-400">
                   <span className="text-lg">⚠</span> Sensitive content detected
                 </div>
