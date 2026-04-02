@@ -1,7 +1,8 @@
 import { useRef, useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
-import '@tensorflow/tfjs';
+import * as tf from '@tensorflow/tfjs';
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
+import * as nsfwjs from 'nsfwjs';
 
 // ICE servers for NAT traversal (public STUN servers)
 const ICE_SERVERS = {
@@ -31,13 +32,18 @@ const LiveMonitoring = () => {
   const [userJoined, setUserJoined] = useState(false);
   const [isBlurActive, setIsBlurActive] = useState(false);
   const [model, setModel] = useState(null);
+  const [nsfwModel, setNsfwModel] = useState(null);
   const isBlurActiveRef = useRef(isBlurActive);
   const modelRef = useRef(null);
+  const nsfwModelRef = useRef(null);
   const lastDetectionTimeRef = useRef(0);
+  const lastNsfwDetectionTimeRef = useRef(0);
   const latestPredictionsRef = useRef([]);
+  const latestNsfwPredictionsRef = useRef([]);
 
   // Keep the ref in sync whenever state changes
   useEffect(() => { modelRef.current = model; }, [model]);
+  useEffect(() => { nsfwModelRef.current = nsfwModel; }, [nsfwModel]);
   useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
   useEffect(() => { isBlurActiveRef.current = isBlurActive; }, [isBlurActive]);
   useEffect(() => {
@@ -51,6 +57,20 @@ const LiveMonitoring = () => {
       }
     };
     loadModel();
+  }, []);
+
+  // Load NSFW detection model once on mount
+  useEffect(() => {
+    const loadNsfwModel = async () => {
+      try {
+        const loadedModel = await nsfwjs.load();
+        setNsfwModel(loadedModel);
+        console.log("NSFW model loaded");
+      } catch (err) {
+        console.error("Failed to load NSFW model:", err);
+      }
+    };
+    loadNsfwModel();
   }, []);
 
   // Keep the ref in sync whenever state changes
@@ -286,6 +306,25 @@ const LiveMonitoring = () => {
           }).catch(err => console.error("Detection error:", err));
         }
 
+        // Perform NSFW classification on canvas frame (throttle to ~500ms)
+        if (nsfwModelRef.current && now - lastNsfwDetectionTimeRef.current >= 500) {
+          lastNsfwDetectionTimeRef.current = now;
+
+          // Convert canvas pixels to a tensor and resize to model input (224x224)
+          const rawTensor = tf.browser.fromPixels(canvas);
+          const resized = tf.image.resizeBilinear(rawTensor, [224, 224]);
+          // nsfwjs expects a 3D tensor (H, W, C) — no need to normalize, the model handles it
+
+          nsfwModelRef.current.classify(resized).then(predictions => {
+            latestNsfwPredictionsRef.current = predictions;
+            console.log('[NSFW]', predictions.map(p => `${p.className}: ${(p.probability * 100).toFixed(1)}%`).join(' | '));
+          }).catch(err => console.error('NSFW classification error:', err));
+
+          // Dispose tensors to prevent memory leaks
+          rawTensor.dispose();
+          resized.dispose();
+        }
+
         // 1. Draw full normal video
         ctx.filter = 'none';
         ctx.drawImage(video, 0, 0, w, h);
@@ -340,7 +379,18 @@ const LiveMonitoring = () => {
 
   return (
     <div className="w-full h-full flex flex-col gap-6 animate-fade-in-up [animation-duration:500ms]">
-      
+
+      {/* NSFW model loading indicator */}
+      {!nsfwModel && (
+        <div className="w-full bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 p-4 rounded-xl text-sm font-medium animate-pulse flex items-center gap-3">
+          <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+          </svg>
+          Loading NSFW detection model…
+        </div>
+      )}
+
       <div className="flex justify-between items-center bg-[#151821]/60 border border-white/5 rounded-2xl p-6 backdrop-blur-xl">
         <div>
           <h2 className="text-2xl font-bold text-white mb-1 tracking-tight">Live Camera Feed</h2>
